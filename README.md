@@ -32,7 +32,7 @@ Some other differences between Florentines and JWTs are as follows:
 * Support for encrypting the same token to multiple recipients in a very compact format. JWTs only support this for the little-used JSON Serialization format. Additional recipients add around 50 bytes of overhead, allowing 7-8 recipients to be encoded in the same space as a single RSA-3072 signature.
 * Support for any number of payload blocks in a token, rather than putting everything into a single payload section. This allows you to rigidly separate untrusted user-supplied data from trusted system-generated data.
 * Payload blocks can be individually encrypted, using misuse-resistant authenticated encryption.
-* No algorithm identifiers or key material are communicated or negotiated in-band within the header, preventing any kind of `alg=none` attacks. Algorithm identifiers are [associated with keys instead](https://neilmadden.blog/2018/09/30/key-driven-cryptographic-agility/). The header itself is encrypted, protecting confidentiality of any metadata and ensuring that nobody tries to trust any data contained within it before its authenticity has been verified.
+* No algorithm identifiers or key material are communicated or negotiated in-band within the header, preventing any kind of `alg=none` attacks. Algorithm identifiers are [associated with keys instead](https://neilmadden.blog/2018/09/30/key-driven-cryptographic-agility/).
 * Support for Macaroon-style caveats, which can be appended to a token after it has been created to attenuate the privileges granted by a token. Just like in the original Macaroon paper, Florentines use simple HMAC-SHA-256 authentication, rather than complicated and expensive public key signature schemes.
 
 ## Technical details
@@ -57,3 +57,21 @@ The initial algorithm suite uses the following cryptographic primitives to imple
 * X25519 key agreement with both ephemeral-static and static-static agreements between recipient and sender key pairs.
 * HKDF is then used to derive a unique key-wrapping key. The KDF process includes all public keys (sender, recipient, ephemeral) to ensure non-malleability and key binding. It also includes an algorithm identifier that uniquely identifiers the KEM+DEM in use, and optionally allows an application-specific context string and user identifiers to be included.
 * Key-wrapping and the DEM used for encryption are based on AES in Synthetic IV (SIV) mode, but using HMAC-SHA-256 rather than CMAC for authentication. The [safe cascade MAC construction](https://neilmadden.blog/2021/10/27/multiple-input-macs/) is used instead of s2v to allow multiple inputs to be authenticated, which is simpler to implement and fits better with how Macaroon caveats are supported.
+
+### Replyable Encryption
+
+Florentines support a `reply()` operation that constructs a new Florentine in response to one that has just been received. This works
+by creating a new Florentine but replacing the original sender's public key with the ephemeral public key from the first Florentine,
+and including the shared secret from the original in the new KDF inputs. This effectively ensures that the reply Florentine is encrypted
+using a key that incorporates both static and ephemeral keys from both parties, providing similar security properties to the 
+[Noise `KK` handshake pattern](http://noiseprotocol.org/noise.html#payload-security-properties).
+
+To support this, when Alice sends a Florentine to Bob she needs to remember the ephemeral secret key until she receives a reply. The
+Florentines API is designed to encapsulate this ephemeral secret in an opaque state object to support this. A special header is used
+to indicate that replying is supported and to specify a deadline for how long the sender is willing to process replies before they
+destroy the original ephemeral secret.
+
+Although in principle you could use this facility to build a simple sort of secure messenger service, in practice this would be quite
+cumbersome and you are better off using something like Signal or Noise in that case. Replies in Florentine are really intended only for
+very basic request-reply handshakes such as OAuth or custom challenge-response authentication protocols where each message expects a
+reply and you are not sending multiple messages concurrently etc. 
